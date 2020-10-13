@@ -6,7 +6,7 @@ Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8
 Sec-Fetch-Site: same-origin
 Sec-Fetch-Mode: no-cors
 Sec-Fetch-Dest: image
-Referer: http://localhost:8080/index.html
+Referer: http://localhost:8080/idex.html
 Accept-Encoding: gzip, deflate, br
 Accept-Language: ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7
 
