@@ -22,11 +22,10 @@ class TCPServer:
 
         # クライアントから受け取ったメッセージを代入（4096は受け取れるバイト数）
         msg_from_client = client_socket.recv(4096)
-        path: str = msg_from_client.decode().split("\r\n")[0].split(" ")[1][1:]
-
         # 受け取ったメッセージをファイルに書き込む
         with open("server_recv.txt", "wb") as f:
             f.write(msg_from_client)
+        path: str = msg_from_client.decode().split("\r\n")[0].split(" ")[1][1:]
 
         # ステータスコード
         status_code = "HTTP/1.1 200 OK\n"

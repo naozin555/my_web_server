@@ -14,9 +14,9 @@ class Main:
         server_socket.listen(10)
 
         while True:
-            print("クライアント接続を待ちます。")
+            print("Main: クライアント接続を待ちます。")
             (client_socket, address) = server_socket.accept()
-            print("クライアント接続")
+            print("Main: クライアント接続")
 
             thread = ServerThread(client_socket=client_socket)
             thread.start()
