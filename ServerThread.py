@@ -1,16 +1,25 @@
-import traceback
+# -*- coding: utf-8 -*-
+import re
 import socket
-from datetime import datetime
+import traceback
+from io import BytesIO
+from sys import stdout
 from threading import Thread
-import os
-import datetime
-from typing import Iterable, List
+from typing import List, Iterable, Dict, Tuple
 
 from WSGIApplication import WSGIApplication
 
 
+class StartResponse:
+    status: str
+    response_headers: Iterable[Tuple[str, str]]
+
+    def __call__(self, status: str, response_headers: Iterable[Tuple[str, str]], exec_info=None):
+        self.status = status
+        self.response_headers = response_headers
+
+
 class ServerThread(Thread):
-    DOCUMENT_ROOT = "src"
     CONTENT_TYPE_MAP = {
         "html": "text/html",
         "htm": "text/html",
@@ -23,8 +32,8 @@ class ServerThread(Thread):
         "gif": "image/gif",
     }
 
-    response_line: str
-    response_headers: List[tuple]
+    response_status: str
+    response_headers: List[Tuple[str, str]]
 
     def __init__(self, client_socket: socket):
         super().__init__()
@@ -34,62 +43,30 @@ class ServerThread(Thread):
         print("Worker: 処理開始")
         # noinspection PyBroadException
         try:
-            # クライアントから受け取ったメッセージを代入（4096は受け取れるバイト数）
-            msg_from_client = self.socket.recv(4096)
-            # 受け取ったメッセージをファイルに書き込む
-            with open("server_recv.txt", "wb") as f:
-                f.write(msg_from_client)
+            # クライアントから受け取ったメッセージを代入
+            request: bytes = self.socket.recv(4096)
 
-            # リクエストメソッド
-            request_method: str = msg_from_client.decode().split("\r\n")[0].split(" ")[0]
-            # 要求されたファイルのパス
-            path: str = msg_from_client.decode().split("\r\n")[0].split(" ")[1]
-            extend: str = path.rsplit(".", maxsplit=1)[1]
-            normalized_path = os.path.normpath(path)  # パスの正規化
-            requested_file_path = self.DOCUMENT_ROOT + normalized_path
-            is_exists = os.path.exists(requested_file_path)
+            # requestをパースする
+            method, path, protocol, request_headers, request_body = self.parse_request(request)
 
-            # ファイルがなければ404エラーを返す
-            if is_exists:
-                # envを作る
-                env = {
-                    # HTTPリクエストのヘッダーの情報を、WSGIのルールに従って正しく作る
-                    # refs) https://www.python.org/dev/peps/pep-3333/#environ-variables
-                    "REQUEST_METHOD": request_method,
-                    "PATH_INFO": requested_file_path
-                }
+            # WSGI Application用のenvを生成
+            env = self.build_env(method, path, protocol, request_headers, request_body)
 
-                # start_responseを作る
-                def start_response(response_line: str, response_headers: List[tuple]):
-                    """start_responseが呼ばれたときに、response_lineとheadersの情報をWSGIサーバーが受け取って保持できるようにする"""
-                    self.response_line = response_line  # ステータスコード
-                    self.response_headers = response_headers  # レスポンスヘッダ
+            # WSGI Application用のstart_responseを生成
+            start_response = StartResponse()
 
-                body_bytes_list: Iterable[bytes] = WSGIApplication().application(env, start_response)
+            # WSGIアプリケーションのapplicationを呼び出す
+            body_bytes_list: Iterable[bytes] = WSGIApplication().application(env, start_response)
 
-                # body_bytes_listをもとにレスポンスを作る
-                output_bytes = b""
-                output_bytes += self.get_response_header()  # レスポンスヘッダ
-                output_bytes += "\r\n".encode()  # 改行
-                output_bytes += self.get_response_body(body_bytes_list)  # レスポンスボディ
+            # 呼び出し結果をもとにレスポンスを生成する
+            output_bytes = self.get_status_line(start_response.status)  # ステータスライン
+            output_bytes += self.get_response_header(start_response.response_headers, path)  # ヘッダー
+            output_bytes += b"\r\n"  # 空行
+            output_bytes += self.get_response_body(body_bytes_list)  # ボディ
 
-                self.socket.send(output_bytes)
+            print(f"######## send message ##########\n{output_bytes.decode()}")
 
-            else:
-                # ステータスコード
-                status_code = "HTTP/1.1 404 Not Found\n"
-                # レスポンスヘッダ
-                date = f"Date: {self._get_date()}\n"
-                server = "Server: Nao/0.1\n"
-                connection = "Connection: Close\n"
-                content_type = f"Content-type: {self.CONTENT_TYPE_MAP[extend]}\n"
-                blank_line = "\n"
-                # 送り返す用のメッセージを生成
-                with open(os.path.join(self.DOCUMENT_ROOT, "404error.html"), "rb") as f:
-                    msg_to_client = (status_code + date + server + connection + content_type + blank_line).encode() \
-                                    + f.read()
-                # メッセージを送り返す
-                self.socket.send(msg_to_client)
+            self.socket.send(output_bytes)
 
         except Exception:
             print("Worker: " + traceback.format_exc())
@@ -98,34 +75,89 @@ class ServerThread(Thread):
             self.socket.close()
             print("Worker: 通信を終了しました")
 
-    def get_content_type(self, ext: str):
-        if ext != "" or ext not in self.CONTENT_TYPE_MAP:
-            return "application/octet-stream"
-        return self.CONTENT_TYPE_MAP[ext]
+    def start_response(self, status, headers):
+        self.response_status = status
+        self.response_headers = headers
 
-    def get_response_header(self) -> bytes:
-        """start_responseがコールされた結果をもとに、レスポンスヘッダーを取得する"""
+    def parse_request(self, request: bytes) -> Tuple[str, str, str, Dict[str, str], bytes]:
+        # request_lineを抽出
+        request_line_raw, remain = request.split(b"\r\n", maxsplit=1)
+        request_line = request_line_raw.decode()
+        # メソッド、パス、プロトコルを取得
+        method, path, protocol = request_line.split(" ", maxsplit=2)
+
+        # request headerを抽出、パース
+        header_raw, body = remain.split(b"\r\n\r\n", maxsplit=1)
+        print(body)
+        header_str = header_raw.decode()
+        headers = self.parse_headers(header_str)
+
+        return method, path, protocol, headers, body
+
+    @staticmethod
+    def parse_headers(header_str: str) -> Dict[str, str]:
+        header_lines = header_str.split("\r\n")
+        header_tuples = (tuple(re.split(r": *", header_line, maxsplit=1)) for header_line in header_lines)
+        return {
+            header_tuple[0]: header_tuple[1]
+            for header_tuple
+            in header_tuples
+        }
+
+    @staticmethod
+    def build_env(method: str, path: str, protocol: str, headers: Dict[str, str], body: bytes) -> dict:
+        split_path = path.split("?", maxsplit=1)
+        env = {
+            "REQUEST_METHOD": method.upper(),
+            "PATH_INFO": split_path[0],
+            "QUERY_STRING": split_path[1] if len(split_path) > 1 else "",
+            "SERVER_PROTOCOL": protocol,
+            "CONTENT_TYPE": headers.get("Content-Type", ""),
+            "wsgi.version": (1, 0, 1),
+            "wsgi.url_scheme": protocol,
+            "wsgi.input": BytesIO(body),
+            "wsgi.errors": stdout,
+            "wsgi.multithread": False,
+            "wsgi.multiprocess": False,
+            "wsgi.run_once": False,
+        }
+
+        # HTTP_Variables
+        for header_key, header_value in headers.items():
+            key = "HTTP_" + header_key.upper().replace("-", "_")
+            env[key] = header_value
+
+        print(f"########## env:\n{env}")
+
+        return env
+
+    def get_content_type(self, path: str):
+        split_path = path.rsplit(".", maxsplit=1)
+        ext = split_path[1] if len(split_path) > 1 else ""
+
+        return self.CONTENT_TYPE_MAP.get(ext, "application/octet-stream")
+
+    @staticmethod
+    def get_status_line(status: str) -> bytes:
         # ex) "HTTP/1.1 200 OK"
-        status_line = "HTTP/1.1 " + self.response_line + "\r\n"
+        return ("HTTP/1.1 " + status + "\r\n").encode()
 
-        # ex)
-        # response_headersはどこで作ってんの？
-        # self.response_headers = [("key1", "value1"), ("key2, value2")]
-        # header_text_list = ["key1: value1", "key2: value2"]
-        # header_text = "key1: value1\r\n key2: value2"
-        header_text_list = (": ".join(response_header) for response_header in self.response_headers)  # ジェネレータ
-        header_text = "\r\n".join(header_text_list) + "\r\n"
+    # noinspection SpellCheckingInspection
+    def get_response_header(self, response_headers: Iterable[Tuple[str, str]], path: str) -> bytes:
+        includes_content_type = False
 
-        header = b""
-        header += status_line.encode()
-        header += header_text.encode()
-        return header
+        header = ""
+        for response_header in response_headers:
+            if response_header[0] == "Content-Type":
+                includes_content_type = True
+            header += ": ".join(response_header) + "\r\n"
+
+        # WSGIアプリケーションから受け取ったヘッダーにContent-Typeがなければ、補完する
+        if not includes_content_type:
+            header = f"Content-Type: {self.get_content_type(path)}\r\n" + header
+
+        return header.encode()
 
     @staticmethod
     def get_response_body(body_bytes_list: Iterable[bytes]) -> bytes:
-        """レスポンスボディを取得する"""
         return b"".join(body_bytes_list)
-
-    @staticmethod
-    def _get_date() -> str:
-        return datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
