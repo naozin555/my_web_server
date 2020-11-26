@@ -6,6 +6,8 @@ from enum import Enum
 class HTTP_STATUS(Enum):
     OK = "200 OK"
 
+    FOUND = "302 Found"
+
     NOT_FOUND = "404 Not Found."
     METHOD_NOT_ALLOWED = "405 Method Not Allowed"
 
@@ -14,8 +16,8 @@ class HTTP_STATUS(Enum):
 
 @dataclass
 class Response:
-    status: HTTP_STATUS
-    content_type: str = "text/html"
+    status: HTTP_STATUS = HTTP_STATUS.OK
+    content_type: str = "text/html; charset=utf-8;"
     headers: dict = None
     cookies: dict = None
     body: bytes = b""

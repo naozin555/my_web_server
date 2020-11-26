@@ -36,8 +36,9 @@ class Request:
 
         if "COOKIE" in request.headers:
             for cookie in re.split(r"; *", request.headers["COOKIE"]):
-                key, value = cookie.split(r"=")
-                request.cookies[key] = value
+                if "=" in cookie:
+                    key, value = cookie.split(r"=")
+                    request.cookies[key] = value
 
         if request.method == "GET":
             request.GET = parse_qs(env["QUERY_STRING"])

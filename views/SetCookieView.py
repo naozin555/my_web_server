@@ -12,4 +12,4 @@ class SetCookieView(BaseView):
         body = "cookies"
         body += str(request.cookies)
         return Response(status=HTTP_STATUS.OK, body=body.encode(),
-                        cookies={"test_cookie1": "hoge1", "test_cookie2": "hoge2"})
+                        cookies={"test_cookie3": "hoge3", "test_cookie4": "hoge4"})
