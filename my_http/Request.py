@@ -10,6 +10,7 @@ class Request:
     method: str
     headers: dict = None
     cookies: dict = None
+    session: dict = None
     GET: Optional[dict] = None
     POST: Optional[dict] = None
 
@@ -18,6 +19,8 @@ class Request:
             self.headers = {}
         if self.cookies is None:
             self.cookies = {}
+        if self.session is None:
+            self.session = {}
         if self.GET is None:
             self.GET = {}
         if self.POST is None:

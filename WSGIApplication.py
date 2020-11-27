@@ -1,6 +1,7 @@
 import traceback
 from typing import Callable, List, Iterable, Dict
 
+from middleware import SessionMiddleware
 from my_http.Request import Request
 from my_http.Response import Response, HTTP_STATUS
 from views.HeadsersView import HeadersView
@@ -24,6 +25,8 @@ class WSGIApplication:
         "/set_cookie": SetCookieView(),
         "/user": UserView(),
     }
+
+    MIDDLEWARES = [SessionMiddleware]
 
     def application(self, env: dict, start_response: Callable[[str, Iterable[tuple]], None]):
         """
@@ -58,7 +61,16 @@ class WSGIApplication:
         # noinspection PyBroadException
         try:
             if path in self.URL_VIEWS:
-                response: Response = self.URL_VIEWS[path].get_response(request)
+                # viewを取得
+                view = self.URL_VIEWS[path]
+
+                # ミドルウェアを適用
+                for middleware in self.MIDDLEWARES:
+                    view = middleware(view)
+                    # 上記はこれと同じ
+                    # view = MyMiddleware3(MyMiddleware2(MyMiddleware1(view)))
+
+                response = view.get_response(request)
 
                 self._start_response_by_response(response)
                 return [response.body]

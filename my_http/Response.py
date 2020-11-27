@@ -20,6 +20,7 @@ class Response:
     content_type: str = "text/html; charset=utf-8;"
     headers: dict = None
     cookies: dict = None
+    session: dict = None
     body: bytes = b""
 
     def __post_init__(self):
@@ -27,3 +28,5 @@ class Response:
             self.headers = {}
         if self.cookies is None:
             self.cookies = {}
+        if self.session is None:
+            self.session = {}
